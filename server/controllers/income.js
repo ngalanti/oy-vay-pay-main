@@ -6,7 +6,8 @@ const {
 } = require("../lib/validation/income");
 const { userIdValidation } = require("../lib/validation/user");
 const { z } = require("zod");
-const income = require("../models/income");
+
+const BASE_CURRENCY = "ILS";
 
 const addIncome = async (req, res) => {
   try {
@@ -25,7 +26,31 @@ const addIncome = async (req, res) => {
       return res.status(404).json({ message: "user not found" });
     }
 
-    const income = new Income({ title, description, amount, tag, currency });
+    let exchangedAmount = amount; 
+
+    if (currency !== BASE_CURRENCY) {
+      const response = await fetch(
+        `https://v6.exchangerate-api.com/v6/${process.env.EXCHANGE_API_KEY}/pair/${currency}/ILS/${amount}`
+      );
+      if (!response.ok) {
+        return res
+          .status(400)
+          .json({ message: "an error occurred while fetching rate" });
+      }
+      
+      const data = await response.json();
+      exchangedAmount = data.conversion_result;
+    }
+
+    const income = new Income({ 
+      title, 
+      description, 
+      amount, 
+      tag, 
+      currency,
+      exchangedAmount 
+    });
+    
     await income.save();
     userExists.incomes.push(income);
     await userExists.save();
@@ -34,7 +59,7 @@ const addIncome = async (req, res) => {
   } catch (error) {
     console.log(error);
     if (error instanceof z.ZodError) {
-      return res.status(400).json({ messege: error.errors[0].message });
+      return res.status(400).json({ message: error.errors[0].message });
     }
     return res.status(500).json({ message: "internal server error" });
   }
@@ -58,7 +83,7 @@ const getIncomes = async (req, res) => {
   } catch (error) {
     console.log(error);
     if (error instanceof z.ZodError) {
-      return res.status(400).json({ messege: error.errors[0].message });
+      return res.status(400).json({ message: error.errors[0].message });
     }
     return res.status(500).json({ message: "internal server error" });
   }
@@ -85,12 +110,28 @@ const updateIncome = async (req, res) => {
       return res.status(404).json({ message: "income not found" });
     }
 
+    let exchangedAmount = amount; 
+
+    if (currency !== BASE_CURRENCY) {
+      const response = await fetch(
+        `https://v6.exchangerate-api.com/v6/${process.env.EXCHANGE_API_KEY}/pair/${currency}/ILS/${amount}`
+      );
+      if (!response.ok) {
+        return res
+          .status(400)
+          .json({ message: "an error occurred while fetching rate" });
+      }
+      const data = await response.json();
+      exchangedAmount = data.conversion_result;
+    }
+
     const updatedIncome = await Income.findByIdAndUpdate(incomeId, {
       title,
       description,
       amount,
       tag,
       currency,
+      exchangedAmount
     });
 
     if (!updatedIncome) {
@@ -98,11 +139,14 @@ const updateIncome = async (req, res) => {
     }
     await updatedIncome.save();
 
-    return res.status(200).json({ message: "income updated successfully" });
+    return res.status(200).json({ 
+      message: "income updated successfully",
+      object: updatedIncome 
+    });
   } catch (error) {
     console.log(error);
     if (error instanceof z.ZodError) {
-      return res.status(400).json({ messege: error.errors[0].message });
+      return res.status(400).json({ message: error.errors[0].message });
     }
     return res.status(500).json({ message: "internal server error" });
   }
@@ -135,15 +179,19 @@ const deleteIncome = async (req, res) => {
     );
     await userExists.save();
 
-    return res.status(200).json({ message: "income deleted successfully" });
+    return res.status(200).json({ 
+      message: "income deleted successfully",
+      deletedIncome 
+    });
   } catch (error) {
     console.log(error);
     if (error instanceof z.ZodError) {
-      return res.status(400).json({ messege: error.errors[0].message });
+      return res.status(400).json({ message: error.errors[0].message });
     }
     return res.status(500).json({ message: "internal server error" });
   }
 };
+
 const getTotalIncomes = async (req, res) => {
   try {
     if (req.user._id != req.params.userId) {
@@ -159,6 +207,7 @@ const getTotalIncomes = async (req, res) => {
     const incomes = await Income.find({ _id: { $in: userExists.incomes } });
 
     const totalIncomes = incomes.reduce((total, income) => {
+      if (income.currency !== "ILS") return (total += income.exchangedAmount);
       return (total += income.amount);
     }, 0);
 
@@ -166,7 +215,7 @@ const getTotalIncomes = async (req, res) => {
   } catch (error) {
     console.log(error);
     if (error instanceof z.ZodError) {
-      return res.status(400).json({ messege: error.errors[0].message });
+      return res.status(400).json({ message: error.errors[0].message });
     }
     return res.status(500).json({ message: "internal server error" });
   }
